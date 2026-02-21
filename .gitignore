@@ -3,9 +3,11 @@
 
 # Data
 data/
+llms/
 
 # Cache
 cache/
+playground/
 
 # OS
 .DS_Store
