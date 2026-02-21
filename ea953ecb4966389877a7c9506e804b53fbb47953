@@ -1,0 +1,23 @@
+docs/technical_proposal_zh.md
+  f2a7efa9ae3516c0 1-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "ea953ecb4966389877a7c9506e804b53fbb47953",
+  "prompts": {
+    "f2a7efa9ae3516c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "538fa043-1d88-4a6f-b7ef-766f7d3fffa6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "wyf-ACCEPT <importwyf@gmail.com>",
+      "messages": [],
+      "total_additions": 941,
+      "total_deletions": 156,
+      "accepted_lines": 772,
+      "overriden_lines": 0
+    }
+  }
+}
