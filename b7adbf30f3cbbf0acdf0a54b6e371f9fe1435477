@@ -1,0 +1,38 @@
+docs/technical_proposal_zh.md
+  483cca2b7bbda94a 118-119,147-152,155,161,181-183,185,187,189,191,193,195-202,219-224,251,253-256,258-263,265-267,275-279,285-286,291-292,298,306,316-318,320-323,384
+docs/technical_proposal.md
+  483cca2b7bbda94a 118-119,147-152,155,161,181-183,185,187,189,191,193,195-202,219-224,251,253-256,258-263,265-267,275-279,285-286,291-292,298,306,316-318,320-323,384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "b7adbf30f3cbbf0acdf0a54b6e371f9fe1435477",
+  "prompts": {
+    "483cca2b7bbda94a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "103723b0-93cc-46ae-8435-8281b77ca4ae",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "wyf-ACCEPT <importwyf@gmail.com>",
+      "messages": [],
+      "total_additions": 150,
+      "total_deletions": 46,
+      "accepted_lines": 142,
+      "overriden_lines": 0
+    },
+    "f2a7efa9ae3516c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "538fa043-1d88-4a6f-b7ef-766f7d3fffa6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "wyf-ACCEPT <importwyf@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 105,
+      "overriden_lines": 0
+    }
+  }
+}
