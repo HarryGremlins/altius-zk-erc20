@@ -78,8 +78,8 @@ unwrap: spend shielded balance (proof) → balanceOf[recipient] += amount
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Altius Execution Engine                         │
-│          — with privacy precompiled opcodes —                │
+│              Altius Execution Engine                        │
+│          — with privacy precompiled opcodes —               │
 │                                                             │
 │  ┌───────────────┐  ┌────────────────┐  ┌────────────────┐  │
 │  │ ERC20 Standard│  │ Shielded Acct  │  │ ZK Verifier    │  │
@@ -115,6 +115,8 @@ com_receiver' = com_receiver + Com(v, r_v)   // EC point addition
 // The execution engine never sees the plaintext values
 ```
 
+Here `r_v` is a **fresh random blinding factor** for the transfer commitment `Com(v, r_v)`. It is derived deterministically from the sender's private key: `r_v = KDF("pedersen" || evm_sk || nonce)` (see Key Derivation Hierarchy below). The blinding factor is essential for the commitment's hiding property — without it, the commitment would reduce to `v·G`, and anyone could brute-force the transfer amount by trying all possible values. After the transfer, the receiver needs both `v` and `r_v` to compute their new plaintext balance and generate proofs for future transactions; these values are delivered via an encrypted memo (see Encrypted Memo below).
+
 **Security properties**:
 - **Hiding**: given `Com(v, r)`, it is infeasible to recover `v` (due to the random blinding factor `r`)
 - **Binding**: it is infeasible to find `(v', r')` such that `Com(v, r) = Com(v', r')` (based on the discrete log assumption)
@@ -142,18 +144,21 @@ When a confidential transfer occurs, the receiver's commitment is updated on-cha
 
 ```
 Sender encrypts memo to Receiver:
-  1. Generate ephemeral key pair: (ek, ek·G)
-  2. ECDH shared secret:  secret = ek · PK_receiver
-  3. Derive symmetric key: sym_key = KDF(secret)
-  4. Encrypt memo:         ciphertext = AES-GCM(sym_key, [v, r_v])
-  5. Attach to tx:         (ek·G, ciphertext)
+  1. Look up receiver's ECIES public key from on-chain registry (see Account Registration below)
+  2. Generate ephemeral key pair: (ek, ek·G)
+  3. ECDH shared secret:  secret = ek · PK_ecies_receiver
+  4. Derive symmetric key: sym_key = KDF(secret)
+  5. Encrypt memo:         ciphertext = AES-GCM(sym_key, [v, r_v])
+  6. Attach to tx:         (ek·G, ciphertext)
 
 Receiver decrypts:
-  1. ECDH shared secret:  secret = sk_receiver · ek·G     // same value
+  1. ECDH shared secret:  secret = sk_ecies_receiver · ek·G   // same value
   2. Derive symmetric key: sym_key = KDF(secret)
   3. Decrypt memo:         [v, r_v] = AES-GCM.decrypt(sym_key, ciphertext)
   4. Update local state:   balance_new = balance_old + v, r_new = r_old + r_v
 ```
+
+Note: `PK_ecies_receiver` is the receiver's **ECIES public key** (derived from their ECIES private key), not their EVM public key. Each user registers their ECIES public key on-chain when joining the shielded system (see Account Registration below).
 
 On-chain overhead: ~80 bytes (32-byte compressed EC point + ~48-byte AES-GCM ciphertext).
 
@@ -173,15 +178,28 @@ EVM Private Key (single master seed)
         Derived per-transaction using an incrementing nonce
 ```
 
-**Recovery**: if the user has their EVM private key + on-chain transaction history, they can reconstruct all ECIES keys and Pedersen randomness values, fully recovering their shielded balance state.
+**Nonce management**: the nonce is tracked client-side and incremented for each shielded operation (wrap or confidential transfer). It is not stored on-chain — the nonce sequence is implicitly determined by the user's on-chain transaction history.
 
-#### Viewing Keys
+**Recovery**: if the user has their EVM private key, they can scan the chain for all their shielded operations (wraps and confidential transfers), replay them in chronological order to reconstruct the nonce sequence, and rederive all ECIES keys and Pedersen randomness values — fully recovering their shielded balance state.
 
-For institutional compliance, users can grant auditors the ability to inspect their transactions:
+#### Auditability
 
-- The owner shares `(value, randomness)` pairs for specific commitments, allowing the auditor to verify `Com(v, r) = v·G + r·H`
-- Alternatively, sharing the ECIES private key allows the auditor to decrypt all transfer memos and reconstruct the full transaction history
-- Viewing keys are **opt-in** and **granular** — users control exactly what is disclosed and to whom
+For institutional compliance, users can grant auditors the ability to inspect their transactions. There are two distinct modes:
+
+**Selective Disclosure** (per-transaction): the user directly shares the `(value, randomness)` pair for a specific commitment, allowing the auditor to verify `Com(v, r) = v·G + r·H`. This is simple data sharing — no special key or infrastructure required. Suitable for one-off or ad-hoc audits.
+
+**Viewing Key** (blanket access): the user shares their **ECIES private key** with the auditor. This single key allows the auditor to decrypt all encrypted memos from the user's incoming transfers (past and future), reconstructing the full transaction history without requiring per-transaction cooperation from the user. This is the true "viewing key" — suitable for continuous compliance monitoring by regulators or institutional custodians.
+
+Both modes are **opt-in** — users control exactly what is disclosed and to whom. Selective disclosure limits exposure to specific transactions; the viewing key provides ongoing surveillance capability and should only be shared with trusted auditors.
+
+#### Account Registration
+
+Before participating in the shielded system, each user must call a `register` function that:
+
+1. **Stores the user's ECIES public key on-chain** — this allows senders to look up the receiver's encryption key when constructing confidential transfers (see Encrypted Memo above)
+2. **Initializes the user's shielded balance** to the identity point (point at infinity), representing `Com(0, 0)` — a commitment to zero balance with zero blinding factor
+
+Registration is a prerequisite for receiving confidential transfers — the `confidentialTransfer` function reverts if the receiver is not registered (no ECIES public key on file). Users who only use the standard ERC20 functions (public balance) do not need to register.
 
 ## 4. Transaction Types
 
@@ -196,10 +214,14 @@ User converts public tokens into the shielded layer.
 ```
 balanceOf[msg.sender] -= amount
 → new Pedersen commitment Com(amount, r) added to sender's shielded balance
-No ZK proof required (amount is known from the public input)
 ```
 
-The sender provides the commitment `Com(amount, r)`. The contract verifies the commitment is well-formed (or trusts the precompile) and records it.
+The sender provides:
+- `amount`: the public amount to wrap
+- `commitment`: the Pedersen commitment `Com(amount, r)` computed off-chain
+- `proof`: a ZK proof that the commitment opens to the claimed amount (i.e., the prover knows `r` such that `commitment == amount·G + r·H`)
+
+The contract verifies the proof to prevent inflation attacks — without verification, a malicious user could wrap 10 tokens but commit to an arbitrarily larger value. If valid, the contract deducts `amount` from the public balance and adds the commitment to the sender's shielded balance via EC point addition: `shieldedBalance[sender]' = shieldedBalance[sender] + commitment`.
 
 ### 4.3 Confidential Transfer (Shielded → Shielded)
 
@@ -226,12 +248,23 @@ On-chain operations:
 
 ### 4.4 Unwrap (Shielded Balance → Public Balance)
 
-Convert shielded balance back to public tokens.
+Convert shielded balance back to public tokens. The amount is revealed during unwrap (public balance is transparent).
 
+The sender provides:
+- `amount`: the amount to unwrap (becomes public)
+- `transferCommitment`: the Pedersen commitment `Com(amount, r_unwrap)` being spent
+- `proof`: a ZK proof proving the following
+
+**What the ZK proof proves**:
+- The sender knows `(balance, r)` that opens `com_sender`
+- `balance >= amount`
+- `transferCommitment == Com(amount, r_unwrap)` for some `r_unwrap` known to the prover
+
+**On-chain operations**:
 ```
-Spend shielded balance (commitment + ZK proof)
-→ balanceOf[recipient] += amount
-Amount is revealed during unwrap (public balance is transparent)
+verify(proof) == true                                         // ZK verification
+com_sender'    = com_sender - transferCommitment              // EC subtraction
+balanceOf[msg.sender] += amount                               // credit public balance
 ```
 
 ## 5. Contract Design
@@ -239,18 +272,30 @@ Amount is revealed during unwrap (public balance is transparent)
 ### 5.1 Core Interface
 
 ```solidity
+struct ECPoint {
+    uint256 x;
+    uint256 y;
+}
+
 contract ConfidentialERC20 is ERC20 {
 
     // --- Standard ERC20 ---
     // transfer(), approve(), transferFrom(), balanceOf() inherited from ERC20
 
+    // --- Register ECIES public key and initialize shielded balance ---
+    function register(bytes calldata eciesPublicKey) external;
+
     // --- Public balance → Shielded balance ---
-    function wrap(uint256 amount, bytes32 commitment) external;
+    function wrap(
+        uint256 amount,
+        ECPoint calldata commitment,
+        bytes calldata proof           // ZK proof that commitment opens to amount
+    ) external;
 
     // --- Confidential transfer (shielded → shielded) ---
     function confidentialTransfer(
         address recipient,
-        bytes32 transferCommitment,
+        ECPoint calldata transferCommitment,
         bytes calldata rangeProof,
         bytes calldata encryptedMemo   // ECIES-encrypted (value, randomness) for recipient
     ) external;
@@ -258,6 +303,7 @@ contract ConfidentialERC20 is ERC20 {
     // --- Shielded balance → Public balance ---
     function unwrap(
         uint256 amount,
+        ECPoint calldata transferCommitment,
         bytes calldata proof
     ) external;
 }
@@ -267,10 +313,16 @@ contract ConfidentialERC20 is ERC20 {
 
 ```solidity
 contract ConfidentialERC20 is ERC20 {
-    // Shielded balances: address → Pedersen commitment (stored as EC point)
-    mapping(address => bytes32) public shieldedBalance;
+    // EC point representation for Pedersen commitments
+    // ECPoint { uint256 x; uint256 y; }
 
-    // ZK range proof verifier (precompile or deployed contract)
+    // Shielded balances: address → Pedersen commitment (stored as EC point)
+    mapping(address => ECPoint) public shieldedBalance;
+
+    // ECIES public keys: address → public key (for encrypted memo delivery)
+    mapping(address => bytes) public eciesPublicKeys;
+
+    // ZK proof verifier (precompile or deployed contract)
     address public verifier;
 }
 ```
@@ -329,4 +381,4 @@ The "commitment bridge" ensures consistency between the two tracks. Details to b
 | Commitment Scheme | Pedersen (`v·G + r·H`) | Pedersen + FHE scheme TBD |
 | Data Model | Account (wrapped accounts) | Account (dual-track) |
 | Execution | Altius Engine + EC precompiles | Altius Engine + EC + FHE precompiles |
-| Compliance | Viewing Keys | Viewing Keys + Proxy Re-Encryption |
+| Compliance | Selective Disclosure + Viewing Keys | Viewing Keys + Proxy Re-Encryption |
