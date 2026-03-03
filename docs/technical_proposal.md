@@ -110,12 +110,12 @@ Com(v, r) = v·G + r·H
 Com(a, r1) + Com(b, r2) = Com(a + b, r1 + r2)
 
 // On-chain balance update for transfer of amount v:
-com_sender'   = com_sender   - Com(v, r_v)   // EC point subtraction
-com_receiver' = com_receiver + Com(v, r_v)   // EC point addition
+com_sender'   = com_sender   - Com(v, r_tx)   // EC point subtraction
+com_receiver' = com_receiver + Com(v, r_tx)   // EC point addition
 // The execution engine never sees the plaintext values
 ```
 
-Here `r_v` is a **fresh random blinding factor** for the transfer commitment `Com(v, r_v)`. It is derived deterministically from the sender's private key: `r_v = KDF("pedersen" || evm_sk || nonce)` (see Key Derivation Hierarchy below). The blinding factor is essential for the commitment's hiding property — without it, the commitment would reduce to `v·G`, and anyone could brute-force the transfer amount by trying all possible values. After the transfer, the receiver needs both `v` and `r_v` to compute their new plaintext balance and generate proofs for future transactions; these values are delivered via an encrypted memo (see Encrypted Memo below).
+Here `r_tx` is a **fresh random blinding factor** for the transfer commitment `Com(v, r_tx)`. It is derived deterministically from the sender's private key: `r_tx = KDF("pedersen" || evm_sk || nonce)` (see Key Derivation Hierarchy below). The blinding factor is essential for the commitment's hiding property — without it, the commitment would reduce to `v·G`, and anyone could brute-force the transfer amount by trying all possible values. After the transfer, the receiver needs both `v` and `r_tx` to compute their new plaintext balance and generate proofs for future transactions; these values are delivered via an encrypted memo (see Encrypted Memo below).
 
 **Security properties**:
 - **Hiding**: given `Com(v, r)`, it is infeasible to recover `v` (due to the random blinding factor `r`)
@@ -138,9 +138,9 @@ The proof is submitted on-chain and verified by the execution engine. The verifi
 
 #### Encrypted Memo (ECIES)
 
-When a confidential transfer occurs, the receiver's commitment is updated on-chain, but the receiver does not know the transfer amount `v` or the randomness `r_v`. Without these values, the receiver cannot compute their new balance or generate proofs for future transactions.
+When a confidential transfer occurs, the receiver's commitment is updated on-chain, but the receiver does not know the transfer amount `v` or the randomness `r_tx`. Without these values, the receiver cannot compute their new balance or generate proofs for future transactions.
 
-**Solution**: the sender encrypts `(v, r_v)` using **ECIES** (Elliptic Curve Integrated Encryption Scheme) and attaches it to the transaction as calldata:
+**Solution**: the sender encrypts `(v, r_tx)` using **ECIES** (Elliptic Curve Integrated Encryption Scheme) and attaches it to the transaction as calldata:
 
 ```
 Sender encrypts memo to Receiver:
@@ -148,14 +148,14 @@ Sender encrypts memo to Receiver:
   2. Generate ephemeral key pair: (ek, ek·G)
   3. ECDH shared secret:  secret = ek · PK_ecies_receiver
   4. Derive symmetric key: sym_key = KDF(secret)
-  5. Encrypt memo:         ciphertext = AES-GCM(sym_key, [v, r_v])
+  5. Encrypt memo:         ciphertext = AES-GCM(sym_key, [v, r_tx])
   6. Attach to tx:         (ek·G, ciphertext)
 
 Receiver decrypts:
   1. ECDH shared secret:  secret = sk_ecies_receiver · ek·G   // same value
   2. Derive symmetric key: sym_key = KDF(secret)
-  3. Decrypt memo:         [v, r_v] = AES-GCM.decrypt(sym_key, ciphertext)
-  4. Update local state:   balance_new = balance_old + v, r_new = r_old + r_v
+  3. Decrypt memo:         [v, r_tx] = AES-GCM.decrypt(sym_key, ciphertext)
+  4. Update local state:   balance_new = balance_old + v, r_new = r_old + r_tx
 ```
 
 Note: `PK_ecies_receiver` is the receiver's **ECIES public key** (derived from their ECIES private key), not their EVM public key. Each user registers their ECIES public key on-chain when joining the shielded system (see Account Registration below).
@@ -382,3 +382,69 @@ The "commitment bridge" ensures consistency between the two tracks. Details to b
 | Data Model | Account (wrapped accounts) | Account (dual-track) |
 | Execution | Altius Engine + EC precompiles | Altius Engine + EC + FHE precompiles |
 | Compliance | Selective Disclosure + Viewing Keys | Viewing Keys + Proxy Re-Encryption |
+
+## Appendix A: Symbol Reference
+
+### Pedersen Commitment
+
+| Symbol | Type | Definition |
+|--------|------|------------|
+| `v` | scalar | The committed plaintext value (e.g., balance or transfer amount) |
+| `r` | scalar | Random blinding factor — ensures the commitment's hiding property; known only to the owner |
+| `G` | EC point | First generator point on the elliptic curve (base point) |
+| `H` | EC point | Second independent generator point; the discrete log of `H` with respect to `G` must be unknown |
+| `Com(v, r)` | EC point | Pedersen commitment function: `Com(v, r) = v·G + r·H` |
+| `com_sender` | EC point | Sender's current shielded balance commitment (before transaction) |
+| `com_sender'` | EC point | Sender's updated shielded balance commitment (after transaction) |
+| `com_receiver` | EC point | Receiver's current shielded balance commitment (before transaction) |
+| `com_receiver'` | EC point | Receiver's updated shielded balance commitment (after transaction) |
+| `com_transfer` | EC point | Transfer commitment: `Com(transfer_amount, r_transfer)` — represents the amount being transferred |
+| `r_tx` | scalar | Fresh random blinding factor for a transfer commitment, derived as `KDF("pedersen" \|\| evm_sk \|\| nonce)` |
+| `r_unwrap` | scalar | Blinding factor for an unwrap transfer commitment |
+
+### Key Derivation & Encryption
+
+| Symbol | Type | Definition |
+|--------|------|------------|
+| `evm_sk` | scalar | The user's EVM private key — serves as the single master seed for all derived keys |
+| `nonce` | integer | Incrementing counter tracked client-side; incremented per shielded operation (wrap or confidential transfer) |
+| `KDF(·)` | function | Key derivation function — deterministically derives a key from input material |
+| `sk_ecies` | scalar | ECIES private key, derived as `KDF("ecies" \|\| evm_sk)` — used for decrypting transfer memos |
+| `PK_ecies` | EC point | ECIES public key, derived from `sk_ecies` — registered on-chain for memo encryption |
+| `ek` | scalar | Ephemeral private key generated by the sender for a single ECIES encryption |
+| `ek·G` | EC point | Ephemeral public key attached to the transaction; allows the receiver to compute the shared secret |
+| `secret` | scalar | ECDH shared secret: sender computes `ek · PK_ecies_receiver`, receiver computes `sk_ecies_receiver · ek·G` |
+| `sym_key` | bytes | Symmetric encryption key derived from the shared secret: `sym_key = KDF(secret)` |
+| `AES-GCM(key, plaintext)` | function | Authenticated encryption function — encrypts and integrity-protects the memo `[v, r_tx]` |
+
+### ZK Range Proofs
+
+| Symbol | Type | Definition |
+|--------|------|------------|
+| `balance` | scalar | Sender's plaintext shielded balance (private, known only to sender) |
+| `amount` | scalar | Transfer or unwrap amount (private in confidential transfer, public in unwrap) |
+| `proof` / `rangeProof` | bytes | ZK proof blob submitted on-chain; proves `balance >= amount` and `amount > 0` without revealing either value |
+| `transferCommitment` | EC point | The Pedersen commitment being spent in an unwrap: `Com(amount, r_unwrap)` |
+| `commitment` | EC point | The Pedersen commitment created during a wrap: `Com(amount, r)` |
+
+### Contract Storage
+
+| Symbol | Type | Definition |
+|--------|------|------------|
+| `ECPoint` | struct | `{ uint256 x; uint256 y }` — represents an elliptic curve point (Pedersen commitment) |
+| `shieldedBalance[addr]` | mapping | `address → ECPoint` — stores each user's shielded balance as a Pedersen commitment |
+| `eciesPublicKeys[addr]` | mapping | `address → bytes` — stores each user's registered ECIES public key |
+| `balanceOf[addr]` | mapping | `address → uint256` — standard ERC20 public balance (inherited) |
+| `verifier` | address | Address of the ZK proof verifier (precompile or deployed contract) |
+
+### FHE — Phase 2
+
+| Symbol | Type | Definition |
+|--------|------|------------|
+| `pk` | FHE key | Network-wide FHE public key — shared by all users for encryption; only ciphertexts under the same `pk` can be computed together |
+| `evk` | FHE key | Evaluation key — used by the execution engine to perform homomorphic operations on ciphertexts without seeing plaintext |
+| `sk` | FHE key | FHE secret key — split via threshold secret sharing among validators (`t`-of-`n`); no single validator can decrypt |
+| `t`-of-`n` | integers | Threshold parameters: `t` validators (out of `n` total) must cooperate to decrypt |
+| `FHE.Enc(v)` | ciphertext | FHE encryption of value `v` under the network public key `pk` |
+| `ct_balance` | ciphertext | FHE-encrypted balance stored in a shielded account (FHE track) |
+| `com_balance` | EC point | Pedersen commitment of the same balance (ZK track); must stay consistent with `ct_balance` |
