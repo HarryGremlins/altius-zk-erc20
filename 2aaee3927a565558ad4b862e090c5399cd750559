@@ -1,0 +1,42 @@
+notes/open_problems.md
+  af1fa67059211479 1-198
+docs/technical_proposal_zh.md
+  af1fa67059211479 39,49-50,105,133-145,388
+notes/open_problems_zh.md
+  af1fa67059211479 1-198
+docs/technical_proposal.md
+  af1fa67059211479 39,49-50,105,133-145,388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "2aaee3927a565558ad4b862e090c5399cd750559",
+  "prompts": {
+    "af1fa67059211479": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "357c5a26-bc5f-46e8-b661-78b4d1e70e65",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "HarryGremlins <importwyf@altiuslabs.xyz>",
+      "messages": [],
+      "total_additions": 442,
+      "total_deletions": 30,
+      "accepted_lines": 432,
+      "overriden_lines": 0
+    },
+    "f2a7efa9ae3516c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "538fa043-1d88-4a6f-b7ef-766f7d3fffa6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "wyf-ACCEPT <importwyf@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 105,
+      "overriden_lines": 0
+    }
+  }
+}
