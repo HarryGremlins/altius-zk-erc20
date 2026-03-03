@@ -36,7 +36,7 @@ A  ──wrap──▶  A'  ──confidential transfer──▶  B'  ──unwr
 |-----------|--------|-----------|
 | Balance representation | **Pedersen Commitment** | Additive homomorphism enables on-chain balance updates without decryption |
 | Validity proofs | **ZK Range Proofs** | Sender knows plaintext, proves balance sufficiency and amount positivity off-chain |
-| Range proof scheme | **TBD (Bulletproofs or equivalent)** | No trusted setup, compact proofs (~600 bytes) |
+| Proving system | **PLONK (Universal SRS)** | Universal setup (one-time ceremony, reusable across circuits); supports lookup tables for efficient range checks; forward-compatible with Phase 2 FHE bridge proofs |
 
 **Why not FHE for Phase 1?**
 
@@ -46,8 +46,8 @@ For simple transfers, the sender knows all plaintext values (their balance, the 
 
 The privacy module runs on the **Altius Execution Engine** — not native Ethereum. The execution engine provides:
 
-- Precompiled opcodes for elliptic curve operations (EC point addition, scalar multiplication)
-- Precompiled opcodes for ZK proof verification
+- Precompiled opcodes for **BN254** elliptic curve operations (EC point addition, scalar multiplication, pairing)
+- Precompiled opcodes for PLONK proof verification (KZG pairing check)
 - Future: FHE-related precompiled opcodes (Phase 2)
 
 ## 3. System Architecture
@@ -102,7 +102,7 @@ Com(v, r) = v·G + r·H
 
 - `v`: the balance value
 - `r`: random blinding factor (known only to the owner)
-- `G`, `H`: two independent elliptic curve generator points (discrete log relationship unknown)
+- `G`, `H`: two independent generator points on the **BN254** elliptic curve (discrete log relationship unknown)
 
 **Additive homomorphism** enables balance updates without decryption:
 
@@ -130,11 +130,19 @@ The sender generates a ZK proof off-chain to prove transaction validity:
 
 The proof is submitted on-chain and verified by the execution engine. The verifier learns nothing about the actual balance or amount — only that the constraints are satisfied.
 
-**Candidate: Bulletproofs**
-- No trusted setup required
-- Proof size: ~600 bytes for a 64-bit range proof
-- Verification: logarithmic in the range size
-- Battle-tested in Monero (since 2018) and Penumbra
+**Proving system: PLONK (Universal SRS)**
+
+All proof statements (wrap, confidential transfer, unwrap) are expressed as arithmetic circuits and proven under a single PLONK proving system with a universal Structured Reference String (SRS).
+
+- Universal SRS: one-time setup ceremony, reusable across all circuits — modifying or adding circuits does not require a new ceremony
+- Proof size: ~2-4 KB
+- Verification: constant time (EC multi-scalar multiplication)
+- Lookup tables: enable efficient range checks without per-bit decomposition
+- Forward-compatible: Phase 2's FHE commitment bridge proof can be added as a new circuit under the same SRS
+
+**Why not Bulletproofs?** Bulletproofs are specialized for range proofs on Pedersen commitments (~600 bytes, no trusted setup), but the confidential transfer requires a *composite* proof (commitment openings + range constraints) that goes beyond what Bulletproofs natively support. Using Bulletproofs for Phase 1 would require building a separate general-purpose proving pipeline for Phase 2, resulting in two parallel proof systems. PLONK provides a unified system from the start.
+
+**Why not Groth16?** Groth16 produces the smallest proofs (~128 bytes) and cheapest verification (~200k gas), but requires a per-circuit trusted setup — every circuit modification triggers a new multi-party ceremony. During active development this is impractical. Once circuits are finalized, a Groth16 wrapper can optionally be added for production optimization (a common pattern in zkRollups).
 
 #### Encrypted Memo (ECIES)
 
@@ -377,7 +385,7 @@ The "commitment bridge" ensures consistency between the two tracks. Details to b
 | Layer | Phase 1 | Phase 2 |
 |-------|---------|---------|
 | Balance Representation | Pedersen Commitment | Pedersen + FHE Ciphertext |
-| Validity Proofs | ZK Range Proofs (Bulletproofs or equivalent) | ZK Range Proofs + FHE computation |
+| Validity Proofs | ZK Proofs via PLONK (Universal SRS) | PLONK proofs + FHE computation |
 | Commitment Scheme | Pedersen (`v·G + r·H`) | Pedersen + FHE scheme TBD |
 | Data Model | Account (wrapped accounts) | Account (dual-track) |
 | Execution | Altius Engine + EC precompiles | Altius Engine + EC + FHE precompiles |
